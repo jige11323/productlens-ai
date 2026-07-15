@@ -43,11 +43,8 @@ type AnalysisResult = {
   sourceMode: "page" | "fallback";
 };
 
-const AI_PROVIDER = (process.env.AI_PROVIDER || "openai").toLowerCase();
-const MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
-const MINIMAX_BASE_URL = (process.env.MINIMAX_BASE_URL || "https://api.minimax.chat/v1").replace(/\/$/, "");
-const MINIMAX_MODEL = process.env.MINIMAX_MODEL || "MiniMax-Text-01";
+const LLM_BASE_URL = (process.env.MINIMAX_BASE_URL || "https://api.minimax.chat/v1").replace(/\/$/, "");
+const LLM_MODEL = process.env.MINIMAX_MODEL || "MiniMax-Text-01";
 
 export async function POST(request: NextRequest) {
   try {
@@ -196,14 +193,19 @@ function extractJsonLd(source: string): unknown {
   return {};
 }
 
-async function generateAnalysis(product: ProductInfo, pageText: string, sourceMode: "page" | "fallback", language: "zh" | "en" = "zh"): Promise<AnalysisResult> {
+async function generateAnalysis(
+  product: ProductInfo,
+  pageText: string,
+  sourceMode: "page" | "fallback",
+  language: "zh" | "en" = "zh"
+): Promise<AnalysisResult> {
   const systemPrompt =
     language === "en"
       ? "You are an expert in e-commerce product understanding, consumer insights, and short video scripts. You must output parseable JSON and stay conservative with unverifiable claims. All user-facing text must be in English; proper nouns (brand names, model numbers) may be kept as-is."
       : "你擅长电商产品理解、消费者洞察和短视频口播文案。你必须输出可解析 JSON，并对无法验证的信息保持克制。所有面向用户的中文文案、翻译、解读必须使用简体中文，专有名词（如品牌名、型号）可保留原文。";
 
   const prompt = buildAnalysisPrompt(product, pageText, language);
-  const content = AI_PROVIDER === "minimax" ? await callMiniMax(systemPrompt, prompt) : await callOpenAICompatible(systemPrompt, prompt);
+  const content = await callLLM(systemPrompt, prompt);
   const parsed = parseJsonContent(content) as Partial<AnalysisResult>;
 
   const finalProduct: ProductInfo = { ...product, ...(parsed.productInfo || {}) };
@@ -418,65 +420,22 @@ ${JSON.stringify(product, null, 2)}
 ${pageText}`;
 }
 
-async function callOpenAICompatible(systemPrompt: string, prompt: string) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("缺少 OPENAI_API_KEY，请先在 .env.local 中配置。");
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        temperature: 0.35,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt
-          },
-          { role: "user", content: prompt }
-        ]
-      })
-    });
-  } catch {
-    throw new Error("无法连接 OpenAI API。若在国内本地运行，请配置 OPENAI_BASE_URL 为可访问的 OpenAI 兼容网关；部署到 Vercel 后通常可直接访问。");
-  }
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`AI API 调用失败：${response.status} ${text.slice(0, 180)}`);
-  }
-
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("AI 没有返回有效内容。");
-  return content;
-}
-
-async function callMiniMax(systemPrompt: string, prompt: string) {
+async function callLLM(systemPrompt: string, prompt: string) {
   const apiKey = process.env.MINIMAX_API_KEY;
-
   if (!apiKey) {
-    throw new Error("缺少 MINIMAX_API_KEY，请先在环境变量中配置。");
+    throw new Error("缺少 MINIMAX_API_KEY，请先在 .env.local 中配置。");
   }
 
   let response: Response;
   try {
-    response = await fetch(`${MINIMAX_BASE_URL}/chat/completions`, {
+    response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: MINIMAX_MODEL,
+        model: LLM_MODEL,
         temperature: 0.35,
         messages: [
           { role: "system", content: systemPrompt },
