@@ -124,11 +124,7 @@ function extractProductInfo(source: string, sourceUrl: string): ProductInfo {
     clean(firstMatch(source, /<title[^>]*>([\s\S]*?)<\/title>/i)) ||
     "待识别商品";
 
-  const imageUrl =
-    pickString(jsonLd, ["image"]) ||
-    meta(source, "og:image") ||
-    clean(firstMatch(source, /"hiRes"\s*:\s*"([^"]+)"/i)) ||
-    "";
+  const imageUrl = extractProductImageUrl(source, jsonLd);
 
   const price =
     pickString(jsonLd, ["offers", "price"]) ||
@@ -209,6 +205,7 @@ async function generateAnalysis(
   const parsed = parseJsonContent(content) as Partial<AnalysisResult>;
 
   const finalProduct: ProductInfo = { ...product, ...(parsed.productInfo || {}) };
+  finalProduct.imageUrl = sanitizeProductImageUrl(finalProduct.imageUrl) || product.imageUrl || "";
   const finalScript = {
     hook: parsed.videoScript?.hook || "",
     script: parsed.videoScript?.script || "",
@@ -473,6 +470,51 @@ function parseJsonContent(content: string) {
 
 function firstMatch(source: string, pattern: RegExp) {
   return pattern.exec(source)?.[1] || "";
+}
+
+function extractProductImageUrl(source: string, jsonLd: unknown) {
+  const candidates = [
+    pickString(jsonLd, ["image"]),
+    meta(source, "og:image"),
+    clean(firstMatch(source, /"hiRes"\s*:\s*"([^"]+)"/i)),
+    clean(firstMatch(source, /"large"\s*:\s*"([^"]+)"/i)),
+    clean(firstMatch(source, /data-old-hires=["']([^"']+)["']/i)),
+    ...Array.from(source.matchAll(/https?:\\?\/\\?\/[^"'\s<>]+/gi)).map((match) => match[0])
+  ];
+
+  for (const candidate of candidates) {
+    const safeUrl = sanitizeProductImageUrl(candidate);
+    if (safeUrl) return safeUrl;
+  }
+
+  return "";
+}
+
+function sanitizeProductImageUrl(input: string) {
+  if (!input) return "";
+
+  const normalized = clean(input)
+    .replace(/\\u002F/gi, "/")
+    .replace(/\\\//g, "/")
+    .replace(/^http:\/\//i, "https://");
+
+  try {
+    const url = new URL(normalized);
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+    const allowedHost =
+      host === "m.media-amazon.com" ||
+      host === "images-na.ssl-images-amazon.com" ||
+      host.endsWith(".ssl-images-amazon.com");
+
+    if (!allowedHost) return "";
+    if (!/\.(jpg|jpeg|png|webp)$/i.test(path)) return "";
+    if (/uedata|\/1\/batch\/|fls-na|pixel|tracking/i.test(normalized)) return "";
+
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 
 function meta(source: string, property: string) {
