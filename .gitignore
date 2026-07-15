@@ -1,6 +1,7 @@
 .next
 .next-*
 .npm-cache
+.vercel-home
 node_modules
 out
 dist
