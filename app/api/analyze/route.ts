@@ -40,8 +40,11 @@ type AnalysisResult = {
   sourceMode: "page" | "fallback";
 };
 
+const AI_PROVIDER = (process.env.AI_PROVIDER || "openai").toLowerCase();
 const MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+const MINIMAX_BASE_URL = (process.env.MINIMAX_BASE_URL || "https://api.minimax.chat/v1").replace(/\/$/, "");
+const MINIMAX_MODEL = process.env.MINIMAX_MODEL || "abab6.5s-chat";
 
 export async function POST(request: NextRequest) {
   try {
@@ -187,64 +190,12 @@ function extractJsonLd(source: string): unknown {
 }
 
 async function generateAnalysis(product: ProductInfo, pageText: string, sourceMode: "page" | "fallback"): Promise<AnalysisResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("缺少 OPENAI_API_KEY，请先在 .env.local 中配置。");
-  }
+  const systemPrompt =
+    "你擅长电商产品理解、消费者洞察和短视频口播文案。你必须输出可解析 JSON，并对无法验证的信息保持克制。";
 
-  const prompt = `你是电商 AI 产品分析助手。请只基于提供的商品信息分析，不要编造无法确认的认证、疗效、销量、价格或极限承诺。
-
-输出必须是严格 JSON，不要 Markdown。
-
-要求：
-1. productInfo 整理产品名称、品类、价格、品牌、评分、评论数、ASIN、图片、规格、核心功能。
-2. analysis 给出目标用户、使用场景、用户痛点、核心卖点、内容角度，每项 3-5 条。
-3. videoScript 生成中文短视频口播文案，总字数 150 字以内，hook 是前 5 秒钩子，script 是完整口播。
-4. qualityCheck 检查是否有夸大、超字数、无法验证信息、合规风险，给 0-100 分。
-5. 如果页面抓取不完整，要在 note 中提醒，不要硬编参数。
-
-已提取信息：
-${JSON.stringify(product, null, 2)}
-
-页面文本片段：
-${pageText}`;
-
-  let response: Response;
-  try {
-    response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        temperature: 0.35,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content:
-              "你擅长电商产品理解、消费者洞察和短视频口播文案。你必须输出可解析 JSON，并对无法验证的信息保持克制。"
-          },
-          { role: "user", content: prompt }
-        ]
-      })
-    });
-  } catch {
-    throw new Error("无法连接 OpenAI API。若在国内本地运行，请配置 OPENAI_BASE_URL 为可访问的 OpenAI 兼容网关；部署到 Vercel 后通常可直接访问。");
-  }
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`OpenAI API 调用失败：${response.status} ${text.slice(0, 180)}`);
-  }
-
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("AI 没有返回有效内容。");
-
-  const parsed = JSON.parse(content) as Partial<AnalysisResult>;
+  const prompt = buildAnalysisPrompt(product, pageText);
+  const content = AI_PROVIDER === "minimax" ? await callMiniMax(systemPrompt, prompt) : await callOpenAICompatible(systemPrompt, prompt);
+  const parsed = parseJsonContent(content) as Partial<AnalysisResult>;
 
   return {
     productInfo: { ...product, ...(parsed.productInfo || {}) },
@@ -267,6 +218,175 @@ ${pageText}`;
     fetchedAt: new Date().toISOString(),
     sourceMode
   };
+}
+
+function buildAnalysisPrompt(product: ProductInfo, pageText: string) {
+  return `你是电商 AI 产品分析助手。请只基于提供的商品信息分析，不要编造无法确认的认证、疗效、销量、价格或极限承诺。
+
+输出必须是严格 JSON，不要 Markdown，不要解释。
+
+JSON 结构必须包含：
+{
+  "productInfo": {
+    "title": "",
+    "category": "",
+    "price": "",
+    "brand": "",
+    "rating": "",
+    "reviewCount": "",
+    "asin": "",
+    "imageUrl": "",
+    "specs": {},
+    "features": [],
+    "sourceUrl": ""
+  },
+  "analysis": {
+    "targetUsers": [],
+    "scenarios": [],
+    "painPoints": [],
+    "sellingPoints": [],
+    "contentAngles": []
+  },
+  "videoScript": {
+    "hook": "",
+    "script": "",
+    "wordCount": 0
+  },
+  "qualityCheck": {
+    "score": 0,
+    "items": [
+      { "name": "", "result": "通过", "note": "" }
+    ]
+  }
+}
+
+要求：
+1. productInfo 整理产品名称、品类、价格、品牌、评分、评论数、ASIN、图片、规格、核心功能。
+2. analysis 给出目标用户、使用场景、用户痛点、核心卖点、内容角度，每项 3-5 条。
+3. videoScript 生成中文短视频口播文案，总字数 150 字以内，hook 是前 5 秒钩子，script 是完整口播。
+4. qualityCheck 检查是否有夸大、超字数、无法验证信息、合规风险，给 0-100 分。
+5. 如果页面抓取不完整，要在 note 中提醒，不要硬编参数。
+
+已提取信息：
+${JSON.stringify(product, null, 2)}
+
+页面文本片段：
+${pageText}`;
+}
+
+async function callOpenAICompatible(systemPrompt: string, prompt: string) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("缺少 OPENAI_API_KEY，请先在 .env.local 中配置。");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        temperature: 0.35,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt
+          },
+          { role: "user", content: prompt }
+        ]
+      })
+    });
+  } catch {
+    throw new Error("无法连接 OpenAI API。若在国内本地运行，请配置 OPENAI_BASE_URL 为可访问的 OpenAI 兼容网关；部署到 Vercel 后通常可直接访问。");
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`AI API 调用失败：${response.status} ${text.slice(0, 180)}`);
+  }
+
+  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error("AI 没有返回有效内容。");
+  return content;
+}
+
+async function callMiniMax(systemPrompt: string, prompt: string) {
+  const apiKey = process.env.MINIMAX_API_KEY;
+  const groupId = process.env.MINIMAX_GROUP_ID;
+
+  if (!apiKey) {
+    throw new Error("缺少 MINIMAX_API_KEY，请先在环境变量中配置。");
+  }
+  if (!groupId) {
+    throw new Error("缺少 MINIMAX_GROUP_ID，请在 MiniMax 控制台复制 Group ID 后配置到环境变量。");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${MINIMAX_BASE_URL}/text/chatcompletion_v2?GroupId=${encodeURIComponent(groupId)}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: MINIMAX_MODEL,
+        temperature: 0.35,
+        tokens_to_generate: 4096,
+        messages: [
+          {
+            sender_type: "USER",
+            sender_name: "用户",
+            text: `${systemPrompt}\n\n${prompt}`
+          }
+        ],
+        reply_constraints: {
+          sender_type: "BOT",
+          sender_name: "助手"
+        }
+      })
+    });
+  } catch {
+    throw new Error("无法连接 MiniMax API。请确认 Vercel 环境变量和网络访问正常。");
+  }
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`MiniMax API 调用失败：${response.status} ${text.slice(0, 180)}`);
+  }
+
+  const data = JSON.parse(text) as {
+    reply?: string;
+    choices?: Array<{ message?: { content?: string }; text?: string }>;
+    base_resp?: { status_code?: number; status_msg?: string };
+  };
+
+  if (data.base_resp?.status_code && data.base_resp.status_code !== 0) {
+    throw new Error(`MiniMax API 返回错误：${data.base_resp.status_code} ${data.base_resp.status_msg || ""}`);
+  }
+
+  const content = data.reply || data.choices?.[0]?.message?.content || data.choices?.[0]?.text || "";
+  if (!content) throw new Error("MiniMax 没有返回有效内容。");
+  return content;
+}
+
+function parseJsonContent(content: string) {
+  try {
+    return JSON.parse(content);
+  } catch {
+    const start = content.indexOf("{");
+    const end = content.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      return JSON.parse(content.slice(start, end + 1));
+    }
+    throw new Error("AI 返回内容不是有效 JSON，请重试。");
+  }
 }
 
 function firstMatch(source: string, pattern: RegExp) {
