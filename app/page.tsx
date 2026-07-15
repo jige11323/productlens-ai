@@ -6,7 +6,6 @@ import {
   Check,
   Clipboard,
   FileSearch,
-  Globe,
   Link,
   Loader2,
   Play,
@@ -66,7 +65,6 @@ const sampleUrl = "https://www.amazon.com/dp/B0F6YQ96L5";
 
 export default function Home() {
   const [url, setUrl] = useState(sampleUrl);
-  const [language, setLanguage] = useState<"zh" | "en">("zh");
   const [result, setResult] = useState<AnalyzeResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -82,7 +80,7 @@ export default function Home() {
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url, language })
+        body: JSON.stringify({ url })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "分析失败");
@@ -198,7 +196,6 @@ export default function Home() {
                 分析选项
               </h2>
               <OptionRow icon={<Link size={16} />} label="站点" value="Amazon 美国站" />
-              <LanguageSelector value={language} onChange={setLanguage} />
               <OptionRow icon={<BarChart3 size={16} />} label="深度" value="标准分析" />
               <label className="check-row">
                 <ShieldCheck size={16} color="#079a97" />
@@ -262,43 +259,6 @@ function OptionRow({ icon, label, value }: { icon: React.ReactNode; label: strin
   );
 }
 
-function LanguageSelector({
-  value,
-  onChange
-}: {
-  value: "zh" | "en";
-  onChange: (next: "zh" | "en") => void;
-}) {
-  return (
-    <div className="field-row">
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-        <Globe size={16} />
-        语言
-      </span>
-      <div className="lang-switch" role="tablist" aria-label="输出语言">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={value === "zh"}
-          className={`lang-option ${value === "zh" ? "active" : ""}`}
-          onClick={() => onChange("zh")}
-        >
-          中文
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={value === "en"}
-          className={`lang-option ${value === "en" ? "active" : ""}`}
-          onClick={() => onChange("en")}
-        >
-          English
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function ProgressItem({ label, done, active }: { label: string; done: boolean; active: boolean }) {
   return (
     <div className="progress-item">
@@ -319,7 +279,7 @@ function EmptyState() {
           <FileSearch size={36} strokeWidth={2.2} />
         </div>
         <h2>输入 Amazon 商品链接开始分析</h2>
-        <p>系统会整理商品信息、提炼用户洞察，并按你选择的语言生成短视频口播文案。</p>
+        <p>系统会整理商品信息、提炼用户洞察，并生成 150 字以内的中文电商种草口播文案。</p>
       </div>
       <div className="empty-samples">
         <div className="empty-samples-title">分析完成后会输出</div>
@@ -378,10 +338,21 @@ function ResultView({
     <div className="result-grid">
       <section className="card">
         <h2 className="card-title">一、产品信息整理</h2>
-        <div className="product-layout">
-          <div className="product-image">
-            {product.imageUrl ? <img src={product.imageUrl} alt={product.title} /> : <span className="image-empty">无主图</span>}
-          </div>
+        <div className={`product-layout ${product.imageUrl ? "" : "no-image"}`}>
+          {product.imageUrl ? (
+            <div className="product-image">
+              <img
+                src={product.imageUrl}
+                alt={product.title}
+                referrerPolicy="no-referrer"
+                onError={(event) => {
+                  const target = event.currentTarget;
+                  target.parentElement?.classList.add("image-failed");
+                  target.remove();
+                }}
+              />
+            </div>
+          ) : null}
           <div>
             <h3 className="product-title">{product.title || "未识别商品名称"}</h3>
             <div className="small-meta">

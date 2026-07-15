@@ -242,43 +242,6 @@ button {
   }
 }
 
-/* ============ Language Switch ============ */
-.lang-switch {
-  display: inline-flex;
-  background: white;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 3px;
-  gap: 2px;
-}
-
-.lang-option {
-  flex: 1;
-  min-width: 0;
-  height: 30px;
-  padding: 0 12px;
-  border: none;
-  background: transparent;
-  border-radius: 6px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  transition: all 0.18s ease;
-  white-space: nowrap;
-}
-
-.lang-option:hover {
-  color: var(--text);
-  background: var(--panel-soft);
-}
-
-.lang-option.active {
-  background: var(--accent-grad);
-  color: white;
-  box-shadow: 0 4px 10px rgba(10, 163, 159, 0.25);
-}
-
 /* ============ Workspace ============ */
 .workspace {
   display: grid;
@@ -686,6 +649,11 @@ button {
   gap: 20px;
 }
 
+.product-layout.no-image {
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
 .product-image {
   aspect-ratio: 1;
   border-radius: var(--radius);
@@ -711,6 +679,10 @@ button {
   object-fit: contain;
   position: relative;
   z-index: 1;
+}
+
+.product-image.image-failed {
+  display: none;
 }
 
 .image-empty {

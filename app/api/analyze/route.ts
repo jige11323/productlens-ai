@@ -48,20 +48,16 @@ const LLM_MODEL = process.env.MINIMAX_MODEL || "MiniMax-Text-01";
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as { url?: string; language?: string };
+    const body = (await request.json()) as { url?: string };
     const productUrl = normalizeUrl(body.url || "");
-    const language: "zh" | "en" = body.language === "en" ? "en" : "zh";
 
     if (!productUrl) {
-      return NextResponse.json(
-        { error: language === "en" ? "Please enter a valid Amazon product URL." : "请输入有效的 Amazon 商品链接。" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "请输入有效的 Amazon 商品链接。" }, { status: 400 });
     }
 
     const page = await fetchProductPage(productUrl);
     const extracted = extractProductInfo(page.text, productUrl);
-    const result = await generateAnalysis(extracted, page.text.slice(0, 16000), page.mode, language);
+    const result = await generateAnalysis(extracted, page.text.slice(0, 16000), page.mode);
 
     return NextResponse.json(result);
   } catch (error) {
@@ -192,15 +188,12 @@ function extractJsonLd(source: string): unknown {
 async function generateAnalysis(
   product: ProductInfo,
   pageText: string,
-  sourceMode: "page" | "fallback",
-  language: "zh" | "en" = "zh"
+  sourceMode: "page" | "fallback"
 ): Promise<AnalysisResult> {
   const systemPrompt =
-    language === "en"
-      ? "You are an expert in e-commerce product understanding, consumer insights, and short video scripts. You must output parseable JSON and stay conservative with unverifiable claims. All user-facing text must be in English; proper nouns (brand names, model numbers) may be kept as-is."
-      : "你擅长电商产品理解、消费者洞察和短视频口播文案。你必须输出可解析 JSON，并对无法验证的信息保持克制。所有面向用户的中文文案、翻译、解读必须使用简体中文，专有名词（如品牌名、型号）可保留原文。";
+    "你擅长电商产品理解、消费者洞察和短视频口播文案。你必须输出可解析 JSON，并对无法验证的信息保持克制。所有面向用户的中文文案、翻译、解读必须使用简体中文，专有名词（如品牌名、型号）可保留原文。";
 
-  const prompt = buildAnalysisPrompt(product, pageText, language);
+  const prompt = buildAnalysisPrompt(product, pageText);
   const content = await callLLM(systemPrompt, prompt);
   const parsed = parseJsonContent(content) as Partial<AnalysisResult>;
 
@@ -295,67 +288,7 @@ function computeQualityScore(
   return { score, breakdown };
 }
 
-function buildAnalysisPrompt(product: ProductInfo, pageText: string, language: "zh" | "en" = "zh") {
-  if (language === "en") {
-    return `You are an e-commerce AI product analysis assistant for cross-border e-commerce sellers. Analyze only the provided product information; do not fabricate unverifiable certifications, effects, sales, prices, or extreme promises.
-
-Output must be strict JSON. No Markdown, no explanations, no extra prose.
-
-JSON structure required:
-{
-  "productInfo": {
-    "title": "English product name (keep original brand/model)",
-    "category": "English category",
-    "price": "Original currency and price string",
-    "brand": "Brand name as-is",
-    "rating": "Rating string as-is",
-    "reviewCount": "Review count string as-is",
-    "asin": "ASIN as-is",
-    "imageUrl": "Image URL as-is",
-    "specs": { "Spec name in English": "Spec value as-is" },
-    "features": ["English core feature 1", "English core feature 2"],
-    "sourceUrl": "Original product URL"
-  },
-  "analysis": {
-    "targetUsers": ["English target user 1", "English target user 2"],
-    "scenarios": ["English scenario 1", "English scenario 2"],
-    "painPoints": ["English pain point 1", "English pain point 2"],
-    "sellingPoints": ["English selling point 1", "English selling point 2"],
-    "contentAngles": ["English content angle 1", "English content angle 2"]
-  },
-  "videoScript": {
-    "hook": "English opening hook (first 5 seconds, 10-15 words)",
-    "script": "Full English voiceover (use line breaks to separate Pain → Selling Points → Scenario → CTA)",
-    "wordCount": 0
-  },
-  "qualityCheck": {
-    "score": 0,
-    "items": [
-      { "name": "English check name", "result": "通过 | 建议优化 | 风险", "note": "English note" }
-    ]
-  }
-}
-
-Requirements:
-- qualityCheck.score is ignored by the system; the backend computes the score from items + word count + field completeness + data source. You only need to produce items (each item's result MUST be one of: "通过" / "建议优化" / "风险"). No need to score.
-1. productInfo: user-facing fields (title, category, spec keys, features) MUST be in English; structured fields (brand, model, ASIN, price, rating) kept as-is.
-2. analysis: all array items in English, 3-5 items each, short phrases.
-3. videoScript: English e-commerce short video voiceover (TikTok/Reels/Shorts). Structure the script with line breaks:
-   - Pain point (1-2 sentences, second person "you/we")
-   - Selling points (2-3 sentences, each citing a REAL feature from productInfo.features/specs)
-   - Scenario (1 sentence, concrete usage moment)
-   - Soft CTA (1 sentence: "Check the link in bio", "Comment '1' and I'll DM you", etc.)
-   Total: 120-150 words for script (excluding hook). Hook goes in videoScript.hook, NOT repeated in script.
-4. qualityCheck.items MUST include at least 4 checks covering: title accuracy, price-description consistency, copy compliance, word-count compliance. name and note in English; result values "通过" / "建议优化" / "风险".
-5. If page extraction is incomplete or a value can't be confirmed, leave the field empty or use "TBD", and note it in qualityCheck.note. Don't fabricate.
-
-Extracted product info:
-${JSON.stringify(product, null, 2)}
-
-Page text snippet:
-${pageText}`;
-  }
-
+function buildAnalysisPrompt(product: ProductInfo, pageText: string) {
   return `你是电商 AI 产品分析助手，目标用户是中国卖家/运营。请只基于提供的商品信息分析，不要编造无法确认的认证、疗效、销量、价格或极限承诺。
 
 输出必须是严格 JSON，不要 Markdown，不要解释，不要任何额外说明文字。
