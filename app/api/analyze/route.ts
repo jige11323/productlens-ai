@@ -85,6 +85,7 @@ async function fetchProductPage(url: string): Promise<{ text: string; mode: "pag
     "accept-language": "en-US,en;q=0.9,zh-CN;q=0.8"
   };
 
+  // Direct fetch first (fastest, best data on residential IPs).
   try {
     const response = await fetch(url, { headers, next: { revalidate: 0 } });
     const html = await response.text();
@@ -95,11 +96,20 @@ async function fetchProductPage(url: string): Promise<{ text: string; mode: "pag
     // Continue to reader fallback.
   }
 
+  // Fallback to Jina Reader (rotates residential IPs, bypasses Amazon anti-bot).
+  // Optional: set JINA_API_KEY in env for higher rate limits and richer content.
   try {
-    const readerUrl = `https://r.jina.ai/http://${url.replace(/^https?:\/\//, "")}`;
-    const response = await fetch(readerUrl, { headers: { accept: "text/plain" }, next: { revalidate: 0 } });
+    const readerUrl = `https://r.jina.ai/${url}`;
+    const readerHeaders: Record<string, string> = {
+      accept: "text/plain",
+      "x-return-format": "html"
+    };
+    const jinaKey = process.env.JINA_API_KEY;
+    if (jinaKey) readerHeaders.authorization = `Bearer ${jinaKey}`;
+
+    const response = await fetch(readerUrl, { headers: readerHeaders, next: { revalidate: 0 } });
     const text = await response.text();
-    if (response.ok && text.length > 500) {
+    if (response.ok && text.length > 500 && !/captcha|robot check/i.test(text)) {
       return { text, mode: "fallback" };
     }
   } catch {
