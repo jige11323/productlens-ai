@@ -5,17 +5,19 @@ import {
   BarChart3,
   Check,
   Clipboard,
-  Download,
   FileSearch,
+  Globe,
   Link,
   Loader2,
   Play,
   Radar,
   Share2,
   ShieldCheck,
-  Sparkles,
   Target,
-  Wand2
+  Wand2,
+  Users,
+  Lightbulb,
+  MessageSquareQuote
 } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 
@@ -49,6 +51,7 @@ type AnalyzeResult = {
   };
   qualityCheck: {
     score: number;
+    breakdown: string[];
     items: Array<{
       name: string;
       result: "通过" | "建议优化" | "风险";
@@ -63,9 +66,12 @@ const sampleUrl = "https://www.amazon.com/dp/B0F6YQ96L5";
 
 export default function Home() {
   const [url, setUrl] = useState(sampleUrl);
+  const [language, setLanguage] = useState<"zh" | "en">("zh");
   const [result, setResult] = useState<AnalyzeResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [shareCopied, setShareCopied] = useState(false);
+  const [scriptCopied, setScriptCopied] = useState(false);
 
   async function analyze(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -76,7 +82,7 @@ export default function Home() {
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url })
+        body: JSON.stringify({ url, language })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "分析失败");
@@ -85,6 +91,48 @@ export default function Home() {
       setError(err instanceof Error ? err.message : "分析失败，请稍后重试。");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function copyToClipboard(text: string): Promise<boolean> {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // Fall through to legacy fallback.
+    }
+    try {
+      const input = document.createElement("textarea");
+      input.value = text;
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      document.body.removeChild(input);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function sharePage() {
+    const ok = await copyToClipboard(window.location.href);
+    if (ok) {
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 1800);
+    }
+  }
+
+  async function copyScript() {
+    if (!result) return;
+    const fullText = `【钩子】${result.videoScript.hook}\n\n${result.videoScript.script}`;
+    const ok = await copyToClipboard(fullText);
+    if (ok) {
+      setScriptCopied(true);
+      window.setTimeout(() => setScriptCopied(false), 1800);
     }
   }
 
@@ -109,14 +157,17 @@ export default function Home() {
           Product<span>Lens</span> AI
         </div>
         <div className="top-actions">
-          <span>AI 产品分析助理</span>
-          <button className="ghost-button" type="button">
-            <Download size={16} />
-            导出报告
+          <span className="top-tag">AI 产品分析助理</span>
+          <button
+            className={`icon-button ${shareCopied ? "is-success" : ""}`}
+            type="button"
+            onClick={sharePage}
+            aria-label="分享"
+            title={shareCopied ? "已复制链接" : "复制当前页面链接"}
+          >
+            {shareCopied ? <Check size={16} /> : <Share2 size={16} />}
           </button>
-          <button className="icon-button" type="button" aria-label="分享">
-            <Share2 size={16} />
-          </button>
+          {shareCopied ? <span className="top-toast">链接已复制</span> : null}
         </div>
       </header>
 
@@ -147,7 +198,7 @@ export default function Home() {
                 分析选项
               </h2>
               <OptionRow icon={<Link size={16} />} label="站点" value="Amazon 美国站" />
-              <OptionRow icon={<Sparkles size={16} />} label="语言" value="中文输出" />
+              <LanguageSelector value={language} onChange={setLanguage} />
               <OptionRow icon={<BarChart3 size={16} />} label="深度" value="标准分析" />
               <label className="check-row">
                 <ShieldCheck size={16} color="#079a97" />
@@ -188,22 +239,11 @@ export default function Home() {
         </aside>
 
         <section className="results">
-          <div className="panel tabs">
-            <div className="tab-list">
-              <span className="tab active">分析结果</span>
-              <span className="tab">竞品对比</span>
-              <span className="tab">流量词洞察</span>
-              <span className="tab">市场洞察</span>
-            </div>
-            <div className="toolbar">
-              <button className="ghost-button" type="button">
-                <Clipboard size={16} />
-                复制文案
-              </button>
-            </div>
-          </div>
-
-          {result ? <ResultView result={result} /> : <EmptyState />}
+          {result ? (
+            <ResultView result={result} scriptCopied={scriptCopied} onCopyScript={copyScript} />
+          ) : (
+            <EmptyState />
+          )}
         </section>
       </div>
     </main>
@@ -218,6 +258,43 @@ function OptionRow({ icon, label, value }: { icon: React.ReactNode; label: strin
         {label}
       </span>
       <div className="select-like">{value}</div>
+    </div>
+  );
+}
+
+function LanguageSelector({
+  value,
+  onChange
+}: {
+  value: "zh" | "en";
+  onChange: (next: "zh" | "en") => void;
+}) {
+  return (
+    <div className="field-row">
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+        <Globe size={16} />
+        语言
+      </span>
+      <div className="lang-switch" role="tablist" aria-label="输出语言">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={value === "zh"}
+          className={`lang-option ${value === "zh" ? "active" : ""}`}
+          onClick={() => onChange("zh")}
+        >
+          中文
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={value === "en"}
+          className={`lang-option ${value === "en" ? "active" : ""}`}
+          onClick={() => onChange("en")}
+        >
+          English
+        </button>
+      </div>
     </div>
   );
 }
@@ -237,18 +314,65 @@ function ProgressItem({ label, done, active }: { label: string; done: boolean; a
 function EmptyState() {
   return (
     <div className="panel empty-state">
-      <div>
-        <FileSearch size={42} color="#079a97" />
+      <div className="empty-state-inner">
+        <div className="empty-icon">
+          <FileSearch size={36} strokeWidth={2.2} />
+        </div>
         <h2>输入 Amazon 商品链接开始分析</h2>
-        <p>系统会整理商品信息、提炼用户洞察，并生成 150 字以内的中文短视频口播文案。</p>
+        <p>系统会整理商品信息、提炼用户洞察，并按你选择的语言生成短视频口播文案。</p>
+      </div>
+      <div className="empty-samples">
+        <div className="empty-samples-title">分析完成后会输出</div>
+        <div className="sample-grid">
+          <div className="sample-card">
+            <div className="sample-icon">
+              <Users size={18} />
+            </div>
+            <div>
+              <h4>目标用户画像</h4>
+              <p>年龄、身份、购买动机与决策路径</p>
+            </div>
+          </div>
+          <div className="sample-card">
+            <div className="sample-icon">
+              <Lightbulb size={18} />
+            </div>
+            <div>
+              <h4>使用场景与痛点</h4>
+              <p>真实使用时机、用户未被满足的需求</p>
+            </div>
+          </div>
+          <div className="sample-card">
+            <div className="sample-icon">
+              <MessageSquareQuote size={18} />
+            </div>
+            <div>
+              <h4>150 字口播文案</h4>
+              <p>含 5 秒钩子，可直接用于短视频投放</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function ResultView({ result }: { result: AnalyzeResult }) {
+function ResultView({
+  result,
+  scriptCopied,
+  onCopyScript
+}: {
+  result: AnalyzeResult;
+  scriptCopied: boolean;
+  onCopyScript: () => void;
+}) {
   const product = result.productInfo;
   const specs = Object.entries(product.specs || {}).slice(0, 6);
+  const scriptChars = (result.videoScript.script || "").replace(/\s/g, "").length;
+  const hookChars = (result.videoScript.hook || "").replace(/\s/g, "").length;
+  const totalChars = scriptChars + hookChars;
+  const scriptStatus: "ok" | "warn" | "over" =
+    scriptChars > 150 ? "over" : scriptChars >= 120 ? "ok" : "warn";
 
   return (
     <div className="result-grid">
@@ -310,11 +434,32 @@ function ResultView({ result }: { result: AnalyzeResult }) {
           <br />
           {result.videoScript.script || "暂无文案"}
         </div>
-        <div className="score-row">
-          <span className="small-meta">字数：{result.videoScript.wordCount || 0} / 150</span>
-          <button className="ghost-button" type="button">
-            <Clipboard size={16} />
-            复制文案
+        <div className="script-meta">
+          <div className="word-counts">
+            <div className="word-chip">
+              <span className="word-chip-label">钩子</span>
+              <span className="word-chip-value">{hookChars}</span>
+              <span className="word-chip-unit">字</span>
+            </div>
+            <div className="word-chip">
+              <span className="word-chip-label">正文</span>
+              <span className={`word-chip-value status-${scriptStatus}`}>{scriptChars}</span>
+              <span className="word-chip-unit">/ 150</span>
+            </div>
+            <div className="word-chip total">
+              <span className="word-chip-label">合计</span>
+              <span className="word-chip-value">{totalChars}</span>
+              <span className="word-chip-unit">字</span>
+            </div>
+          </div>
+          <button
+            className={`ghost-button ${scriptCopied ? "is-success" : ""}`}
+            type="button"
+            onClick={onCopyScript}
+            disabled={!result.videoScript.script}
+          >
+            {scriptCopied ? <Check size={16} /> : <Clipboard size={16} />}
+            {scriptCopied ? "已复制" : "复制文案"}
           </button>
         </div>
       </section>
@@ -336,12 +481,21 @@ function ResultView({ result }: { result: AnalyzeResult }) {
           ))}
         </div>
         <div className="score-row">
-          <span>
-            质量评分：<strong className="score">{result.qualityCheck.score}</strong> / 100
-          </span>
-          <button className="ghost-button" type="button">
-            查看优化建议
-          </button>
+          <div className="score-info">
+            <span className="score-label">质量评分</span>
+            <strong className="score">{result.qualityCheck.score}</strong>
+            <span className="score-max">/ 100</span>
+          </div>
+          <div className="breakdown-tags">
+            {result.qualityCheck.breakdown.map((item) => (
+              <span
+                key={item}
+                className={`breakdown-tag ${item === "无扣分项" ? "is-empty" : "is-penalty"}`}
+              >
+                {item}
+              </span>
+            ))}
+          </div>
         </div>
       </section>
     </div>
